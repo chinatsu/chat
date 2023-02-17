@@ -1,5 +1,5 @@
-use ansi_term::{ANSIString, Color::Fixed};
-use phf::phf_map;
+use ansi_term::{ANSIString, Color::Fixed, Color::RGB};
+use std::num::ParseIntError;
 use twitchchat::{
     connector::smol::Connector,
     messages::{Commands, Privmsg},
@@ -8,33 +8,21 @@ use twitchchat::{
     Status, UserConfig,
 };
 
-static COLORS: phf::Map<
-    &'static str,
-    ansi_term::Color,
-> = phf_map! {
-    // unsure if these actually map to
-    // correct twitch chatter colors
-    "#FF0000" => Fixed(1),
-    "#0000FF" => Fixed(4),
-    "#008000" => Fixed(2),
-    "#B22222" => Fixed(1),
-    "#FF7F50" => Fixed(9),
-    "#ADFF2F" => Fixed(10),
-    "#FF4500" => Fixed(3),
-    "#2E8B57" => Fixed(2),
-    "#DAA520" => Fixed(11),
-    "#D2691E" => Fixed(9),
-    "#5F9EA0" => Fixed(6),
-    "#1E90FF" => Fixed(12),
-    "#FF69B4" => Fixed(13),
-    "#8A2BE2" => Fixed(5),
-    "#00FF7F" => Fixed(10)
-};
+fn get_color(hex: &str) -> ansi_term::Color {
+    let hex = if hex.starts_with('#') {
+        &hex[1..]
+    } else {
+        hex
+    };
 
-fn get_color(
-    hex: &str,
-) -> Option<ansi_term::Color> {
-    COLORS.get(hex).cloned()
+    match (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<Result<Vec<u8>, ParseIntError>>()
+    {
+        Ok(v) => RGB(v[0], v[1], v[2]),
+        Err(_) => Fixed(15),
+    }
 }
 
 fn colored_nick<'a>(
@@ -46,10 +34,7 @@ fn colored_nick<'a>(
         None => "unset".to_string(),
     };
 
-    match get_color(&hex) {
-        Some(c) => c.paint(name),
-        None => Fixed(15).paint(name),
-    }
+    get_color(&hex).paint(name)
 }
 
 async fn connect(
@@ -57,11 +42,9 @@ async fn connect(
     channel: &String,
 ) -> anyhow::Result<AsyncRunner> {
     let connector = Connector::twitch()?;
-    let mut runner = AsyncRunner::connect(
-        connector,
-        user_config,
-    )
-    .await?;
+    let mut runner =
+        AsyncRunner::connect(connector, user_config)
+            .await?;
     let _ = runner.join(channel).await?;
 
     Ok(runner)
@@ -102,31 +85,28 @@ async fn show_message(msg: Privmsg<'_>) {
         "cynanbot" => return,
         _ => {}
     };
+    let nick = match msg.display_name() {
+        Some(n) => n,
+        None => msg.name(),
+    };
+
     println!(
         "{} {}",
-        colored_nick(
-            msg.name(),
-            msg.tags().get("color")
-        ),
+        colored_nick(nick, msg.tags().get("color")),
         msg.data()
     );
 }
 
 fn main() -> anyhow::Result<()> {
-    let channel =
-        std::env::var("TWITCH_CHANNEL")?;
+    let channel = std::env::var("TWITCH_CHANNEL")?;
     let fut = async move {
         let config = UserConfig::builder()
             .anonymous()
-            .capabilities(&[
-                Capability::Tags,
-            ])
+            .capabilities(&[Capability::Tags])
             .build()?;
-        let runner = connect(
-            &config,
-            &channel.to_string(),
-        )
-        .await?;
+        let runner =
+            connect(&config, &channel.to_string())
+                .await?;
         read_loop(runner).await
     };
 
