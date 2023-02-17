@@ -14,6 +14,10 @@ fn get_color(hex: &str) -> ansi_term::Color {
     } else {
         hex
     };
+    
+    if hex.len() != 6 {
+        return RGB(100, 100, 100);
+    }
 
     match (0..hex.len())
         .step_by(2)
