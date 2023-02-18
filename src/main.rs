@@ -1,5 +1,6 @@
 use ansi_term::{ANSIString, Color::Fixed, Color::RGB};
 use std::num::ParseIntError;
+use textwrap::{fill, termwidth, Options};
 use twitchchat::{
     connector::smol::Connector,
     messages::{Commands, Privmsg},
@@ -7,6 +8,7 @@ use twitchchat::{
     twitch::Capability,
     Status, UserConfig,
 };
+
 
 fn get_color(hex: &str) -> ansi_term::Color {
     let hex = if hex.starts_with('#') {
@@ -87,6 +89,8 @@ async fn show_message(msg: Privmsg<'_>) {
         "funtoon" => return,
         "botfrobber" => return,
         "cynanbot" => return,
+        "nightbot" => return,
+        "streamelements" => return,
         _ => {}
     };
     let nick = match msg.display_name() {
@@ -94,15 +98,27 @@ async fn show_message(msg: Privmsg<'_>) {
         None => msg.name(),
     };
 
-    println!(
+    let message = format!(
         "{} {}",
         colored_nick(nick, msg.tags().get("color")),
         msg.data()
     );
+
+    let fill_opts = Options::new(termwidth());
+    println!("{}", fill(&message, &fill_opts));
 }
 
 fn main() -> anyhow::Result<()> {
-    let channel = std::env::var("TWITCH_CHANNEL")?;
+    let args: Vec<String> = std::env::args()
+        .collect();
+
+    if args.len() < 2 {
+        println!(
+            "Please specify desired Twitch channel"
+        );
+        return Ok(())
+    }
+    let channel = &args[1];
     let fut = async move {
         let config = UserConfig::builder()
             .anonymous()
