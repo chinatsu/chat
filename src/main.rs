@@ -1,8 +1,9 @@
 use ansi_term::{
     ANSIString, Color::Fixed, Color::RGB,
 };
+use base64::{engine::general_purpose, Engine as _};
+use itertools::Itertools;
 use std::num::ParseIntError;
-use textwrap::{fill, termwidth, Options};
 use twitchchat::{
     connector::smol::Connector,
     messages::{Commands, Privmsg},
@@ -69,7 +70,7 @@ async fn read_loop(
     loop {
         match runner.next_message().await? {
             Status::Message(msg) => {
-                handle(msg).await;
+                handle(msg).await?;
             }
             Status::Quit => {
                 break;
@@ -82,22 +83,42 @@ async fn read_loop(
     Ok(())
 }
 
-async fn handle(msg: Commands<'_>) {
+async fn handle(msg: Commands<'_>) -> anyhow::Result<()> {
     match msg {
         Commands::Privmsg(msg) => {
-            show_message(msg).await
+            Ok(show_message(msg).await?)
         }
-        _ => {}
+        _ => Ok(())
     }
 }
 
-async fn show_message(msg: Privmsg<'_>) {
+async fn emote_to_image(emote_id: usize) -> anyhow::Result<Vec<u8>> {
+    let bytes = reqwest::blocking::get(format!("https://static-cdn.jtvnw.net/emoticons/v2/{}/static/light/1.0", emote_id))?
+        .bytes()?;
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("\x1b_Ga=T,f=100,r=1,m=0;{encoded}\x1b\\",).into_bytes())
+}
+
+async fn populate_emotes(msg: &Privmsg<'_>) -> anyhow::Result<String> {
+    let mut message = String::from(msg.data()).into_bytes();
+    
+    for emote in msg.iter_emotes() {
+        let img = emote_to_image(emote.id).await?;
+        for range in emote.ranges.iter().sorted_by_key(|r| r.start).rev() {
+            message.splice(range.start as usize..range.end as usize+1, img.iter().cloned());
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&message).into_owned())
+}
+
+async fn show_message(msg: Privmsg<'_>) -> anyhow::Result<()> {
     match msg.name() {
-        "funtoon" => return,
-        "botfrobber" => return,
-        "cynanbot" => return,
-        "nightbot" => return,
-        "streamelements" => return,
+        "funtoon" => return Ok(()),
+        "botfrobber" => return Ok(()),
+        "cynanbot" => return Ok(()),
+        "nightbot" => return Ok(()),
+        "streamelements" => return Ok(()),
         _ => {}
     };
     let nick = match msg.display_name() {
@@ -111,11 +132,11 @@ async fn show_message(msg: Privmsg<'_>) {
             nick,
             msg.tags().get("color")
         ),
-        msg.data()
+        populate_emotes(&msg).await?
     );
 
-    let fill_opts = Options::new(termwidth());
-    println!("{}", fill(&message, &fill_opts));
+    println!("{}", message);
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
