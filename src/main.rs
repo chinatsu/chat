@@ -1,7 +1,9 @@
 use ansi_term::{
     ANSIString, Color::Fixed, Color::RGB,
 };
-use base64::{engine::general_purpose, Engine as _};
+use base64::{
+    engine::general_purpose, Engine as _,
+};
 use itertools::Itertools;
 use std::num::ParseIntError;
 use twitchchat::{
@@ -83,36 +85,68 @@ async fn read_loop(
     Ok(())
 }
 
-async fn handle(msg: Commands<'_>) -> anyhow::Result<()> {
+async fn handle(
+    msg: Commands<'_>,
+) -> anyhow::Result<()> {
     match msg {
         Commands::Privmsg(msg) => {
             Ok(show_message(msg).await?)
         }
-        _ => Ok(())
+        _ => Ok(()),
     }
 }
 
-async fn emote_to_image(emote_id: usize) -> anyhow::Result<Vec<u8>> {
-    let bytes = reqwest::blocking::get(format!("https://static-cdn.jtvnw.net/emoticons/v2/{}/static/light/1.0", emote_id))?
+async fn emote_to_image(
+    emote_id: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let bytes = reqwest::blocking::get(
+        format!(
+            "https://static-cdn.jtvnw.net/emoticons/v2/{}/static/light/1.0", 
+            emote_id)
+        )?
         .bytes()?;
-    let encoded = general_purpose::STANDARD.encode(&bytes);
-    Ok(format!("\x1b_Ga=T,f=100,r=1,m=0;{encoded}\x1b\\",).into_bytes())
+    let encoded =
+        general_purpose::STANDARD.encode(&bytes);
+    if encoded.len() > 4096 {
+        // ignore the emote if it's too large
+        return Ok(vec![]);
+    }
+    Ok(format!(
+        "\x1b_Ga=T,f=100,r=1,m=0;{encoded}\x1b\\",
+    )
+    .into_bytes())
 }
 
-async fn populate_emotes(msg: &Privmsg<'_>) -> anyhow::Result<String> {
-    let mut message = String::from(msg.data()).into_bytes();
-    
+async fn populate_emotes(
+    msg: &Privmsg<'_>,
+) -> anyhow::Result<String> {
+    let mut message =
+        String::from(msg.data()).into_bytes();
+
     for emote in msg.iter_emotes() {
-        let img = emote_to_image(emote.id).await?;
-        for range in emote.ranges.iter().sorted_by_key(|r| r.start).rev() {
-            message.splice(range.start as usize..range.end as usize+1, img.iter().cloned());
+        let img =
+            emote_to_image(&emote.id).await?;
+        for range in emote
+            .ranges
+            .iter()
+            .sorted_by_key(|r| r.start)
+            .rev()
+        {
+            message.splice(
+                range.start as usize
+                    ..range.end as usize + 1,
+                img.iter().cloned(),
+            );
         }
     }
 
-    Ok(String::from_utf8_lossy(&message).into_owned())
+    Ok(String::from_utf8_lossy(&message)
+        .into_owned())
 }
 
-async fn show_message(msg: Privmsg<'_>) -> anyhow::Result<()> {
+async fn show_message(
+    msg: Privmsg<'_>,
+) -> anyhow::Result<()> {
     match msg.name() {
         "funtoon" => return Ok(()),
         "botfrobber" => return Ok(()),
@@ -126,16 +160,22 @@ async fn show_message(msg: Privmsg<'_>) -> anyhow::Result<()> {
         None => msg.name(),
     };
 
-    let message = format!(
+    let message = populate_emotes(&msg)
+        .await?
+        .trim()
+        .to_string();
+    if message.len() == 0 {
+        return Ok(());
+    }
+    println!(
         "{} {}",
         colored_nick(
             nick,
             msg.tags().get("color")
         ),
-        populate_emotes(&msg).await?
+        message
     );
 
-    println!("{}", message);
     Ok(())
 }
 
